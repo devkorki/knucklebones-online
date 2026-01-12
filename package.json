@@ -1,0 +1,17 @@
+{
+  "name": "knucklebones-online",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm --prefix server run dev\" \"npm --prefix client run dev\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+ 
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
