@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import OnlineGame from "./OnlineGame";
 
@@ -8,18 +8,30 @@ const SERVER_URL =
 
 const NAME_REGEX = /^[a-zA-Z0-9]{2,16}$/;
 const isValidName = (name) => NAME_REGEX.test(name.trim());
+const NAME_STORAGE_KEY = "kb:name";
 
 export default function OnlineLobby({ onBack }) {
     const [socket, setSocket] = useState(null);
     const [game, setGame] = useState(null);
 
-    const [name, setName] = useState("");
+    // const [name, setName] = useState("");
+    const [name, setName] = useState(() => localStorage.getItem(NAME_STORAGE_KEY) || "");
     const [code, setCode] = useState("");
     const [room, setRoom] = useState(null);
     const [me, setMe] = useState(null);
     const [error, setError] = useState("");
 
+    const [busy, setBusy] = useState(false);
+    const [busyText, setBusyText] = useState("");
+    const busyTimerRef = useRef(null);
+
     const isHost = useMemo(() => room && me && room.hostId === me, [room, me]);
+
+    useEffect(() => {
+        const clean = name.trim();
+        if (clean) localStorage.setItem(NAME_STORAGE_KEY, clean);
+    }, [name]);
+
 
 
     useEffect(() => {
@@ -42,13 +54,27 @@ export default function OnlineLobby({ onBack }) {
         }
 
         const s = io(SERVER_URL, { transports: ["websocket"] });
+
+
+        startBusy("Connecting to server…");
+
+        s.on("connect", () => {
+            stopBusy();
+            setError("");
+        });
+
+        s.on("connect_error", () => {
+            setError("Cannot connect to server. It may be waking up…");
+            startBusy("Waking server… (this can take ~30s on free Render)");
+        });
         setSocket(s);
 
         s.on("game:stopped", ({ reason }) => {
             setGame(null);
-            setRoom(null);
             setError(reason || "Game stopped.");
         });
+
+
 
         s.on("connect", () => setError(""));
         s.on("connect_error", () => setError("Cannot connect to server. Is it running?"));
@@ -61,12 +87,34 @@ export default function OnlineLobby({ onBack }) {
         s.on("game:state", (g) => setGame(g));
         s.on("room:lobby", () => setGame(null));
 
+        s.on("disconnect", () => {
+            startBusy("Reconnecting…");
+        });
+
         return () => s.disconnect();
+    }, []);
+
+    function startBusy(text) {
+        setBusyText(text);
+        clearTimeout(busyTimerRef.current);
+        busyTimerRef.current = setTimeout(() => setBusy(true), 300);
+    }
+
+    function stopBusy() {
+        clearTimeout(busyTimerRef.current);
+        busyTimerRef.current = null;
+        setBusy(false);
+        setBusyText("");
+    }
+
+    useEffect(() => {
+        return () => clearTimeout(busyTimerRef.current);
     }, []);
 
     function createRoom() {
         if (!socket) return;
         const cleanName = name.trim();
+        localStorage.setItem(NAME_STORAGE_KEY, cleanName);
         if (!isValidName(cleanName)) return setError("Name must be 2–16 (letters & numbers).");
 
         setError("");
@@ -75,11 +123,24 @@ export default function OnlineLobby({ onBack }) {
             setCode(res.code);
             setMe(res.me);
         });
+
+
+        setTimeout(() => {
+            // only show if still waiting
+            setBusy((b) => {
+                if (!b) return b;
+                setBusyText("Still waiting… server might be waking. Try again in a few seconds.");
+                return b;
+            });
+        }, 12000);
+
     }
 
     function joinRoom() {
         if (!socket) return;
         const cleanName = name.trim();
+        localStorage.setItem(NAME_STORAGE_KEY, cleanName);
+
         if (!isValidName(cleanName)) return setError("Name must be 2–16 (letters & numbers).");
 
         const cleanCode = code.trim().toUpperCase();
@@ -91,6 +152,15 @@ export default function OnlineLobby({ onBack }) {
             setCode(res.code);
             setMe(res.me);
         });
+
+
+        setTimeout(() => {
+            setBusy((b) => {
+                if (!b) return b;
+                setBusyText("Still waiting… server might be waking. Try again in a few seconds.");
+                return b;
+            });
+        }, 12000);
     }
 
     function leaveRoom() {
@@ -106,10 +176,17 @@ export default function OnlineLobby({ onBack }) {
         return (
             <OnlineGame
                 socket={socket}
+                room={room}
                 roomCode={room.code}
                 me={me}
                 game={game}
-                onLeaveToLobby={() => {
+
+
+                onReturnToLobby={() => setGame(null)}
+
+
+                onQuit={() => {
+                    socket.emit("room:leave", { code: room.code }, () => { });
                     setGame(null);
                     setRoom(null);
                     setCode("");
@@ -119,6 +196,7 @@ export default function OnlineLobby({ onBack }) {
             />
         );
     }
+
 
     return (
         <div
@@ -151,6 +229,9 @@ export default function OnlineLobby({ onBack }) {
                         </div>
                     </div>
 
+
+
+
                     <button
                         onClick={() => (room ? leaveRoom() : onBack?.())}
                         style={{
@@ -167,6 +248,8 @@ export default function OnlineLobby({ onBack }) {
                         {room ? "Leave room" : "← Back"}
                     </button>
                 </div>
+
+
 
                 {error && (
                     <div
@@ -252,7 +335,7 @@ export default function OnlineLobby({ onBack }) {
                 ) : (
                     <div style={{ marginTop: 16 }}>
 
-                        {room?.notice && !game && (<div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(0,0,0,0.20)", color: "rgba(255,255,255,0.85)", }} > {room.notice} </div>)}
+                        {/* {room?.notice && !game && (<div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(0,0,0,0.20)", color: "rgba(255,255,255,0.85)", }} > {room.notice} </div>)} */}
                         <div
                             style={{
                                 padding: 12,
@@ -295,8 +378,50 @@ export default function OnlineLobby({ onBack }) {
                                             {p.id === me ? "  (YOU)" : ""}
                                         </div>
                                     </div>
+
+
+
+
+
                                 ))}
+
+                                {room.seriesWins && room.players?.length === 2 && (
+                                    <div style={{ marginTop: 12, opacity: 0.9, fontWeight: 800 }}>
+                                        {/* Series ({room.mode === "bo3" ? "First to 3" : room.mode === "bo5" ? "First to 5" : "Infinite"}):{" "} */}
+                                        {/* {room.players[0].name} {room.seriesWins[room.players[0].id] || 0} – {room.seriesWins[room.players[1].id] || 0} {room.players[1].name}
+                                        {room.seriesOver ? "  Finished" : ""} */}
+                                    </div>
+                                )}
+
                             </div>
+
+
+                            {isHost && (
+                                <div style={{ marginTop: 12, display: "grid", gap: 6 }}>
+                                    <div style={{ fontWeight: 900 }}>Mode</div>
+                                    <select
+                                        value={room.mode || "infinite"}
+                                        onChange={(e) => {
+                                            socket.emit("room:mode", { code: room.code, mode: e.target.value }, (res) => {
+                                                if (!res?.ok) setError(res?.error || "Could not set mode");
+                                            });
+                                        }}
+                                        style={{
+                                            padding: 10,
+                                            borderRadius: 12,
+                                            border: "1px solid rgba(255,255,255,0.12)",
+                                            background: "rgba(0,0,0,0.28)",
+                                            color: "white",
+                                            fontWeight: 800,
+                                        }}
+                                    >
+                                        <option value="infinite">Infinite</option>
+                                        <option value="bo3">First to 3</option>
+                                        <option value="bo5">First to 5</option>
+                                    </select>
+                                </div>
+                            )}
+
 
                             {isHost && (
                                 <button
@@ -320,6 +445,76 @@ export default function OnlineLobby({ onBack }) {
                                     Start Game
                                 </button>
                             )}
+
+
+
+                            {busy && (
+                                <div
+                                    style={{
+                                        position: "fixed",
+                                        inset: 0,
+                                        background: "rgba(0,0,0,0.6)",
+                                        display: "grid",
+                                        placeItems: "center",
+                                        zIndex: 2000,
+                                        padding: 16,
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            width: "min(420px, 100%)",
+                                            borderRadius: 18,
+                                            border: "1px solid rgba(255,255,255,0.12)",
+                                            background: "rgba(16,16,18,0.9)",
+                                            boxShadow: "0 18px 45px rgba(0,0,0,0.55)",
+                                            backdropFilter: "blur(14px)",
+                                            padding: 16,
+                                            color: "white",
+                                        }}
+                                    >
+                                        <div style={{ fontWeight: 900, fontSize: 16 }}>Connecting</div>
+                                        <div style={{ marginTop: 6, opacity: 0.8, fontSize: 13 }}>{busyText}</div>
+
+                                        <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 12 }}>
+                                            <div
+                                                style={{
+                                                    width: 18,
+                                                    height: 18,
+                                                    borderRadius: "50%",
+                                                    border: "2px solid rgba(255,255,255,0.25)",
+                                                    borderTopColor: "rgba(255,255,255,0.9)",
+                                                    animation: "spin 0.9s linear infinite",
+                                                }}
+                                            />
+                                            <div style={{ opacity: 0.7, fontSize: 12 }}>
+                                                If the server is sleeping, this can take a bit.
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            onClick={() => stopBusy()}
+                                            style={{
+                                                marginTop: 14,
+                                                width: "100%",
+                                                padding: "10px 14px",
+                                                borderRadius: 12,
+                                                border: "1px solid rgba(255,255,255,0.12)",
+                                                background: "rgba(255,255,255,0.08)",
+                                                color: "white",
+                                                cursor: "pointer",
+                                                fontWeight: 900,
+                                            }}
+                                        >
+                                            Close
+                                        </button>
+
+                                        <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+                                    </div>
+                                </div>
+                            )}
+
                         </div>
                     </div>
                 )}

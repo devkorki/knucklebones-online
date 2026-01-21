@@ -133,21 +133,48 @@ function scoreBoard(board = [[], [], []]) {
     return board.reduce((acc, col) => acc + scoreColumn(col), 0);
 }
 
-export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby }) {
+export default function OnlineGame({ socket, roomCode, room, me, game, onReturnToLobby, onQuit }) {
+    const rematch = room?.rematch || null;
+
+    const oppId = getOpponentId(game, me);
+
+    const seriesWins = room?.seriesWins || {};
+    const mode = room?.mode || "infinite";
+    const target = mode === "bo3" ? 3 : mode === "bo5" ? 5 : null;
+
+    // const oppId = getOpponentId(game, me);
+
+    const myName = game?.playerNames?.[me] ?? "You";
+    const oppName = oppId ? (game?.playerNames?.[oppId] ?? "Opponent") : "Opponent";
+
+    const mySeries = seriesWins[me] || 0;
+    const oppSeries = oppId ? (seriesWins[oppId] || 0) : 0;
+
+    const seriesLabel =
+        mode === "bo3" ? "First to 3" :
+            mode === "bo5" ? "First to 5" :
+                "Infinite";
+
+    const iRequested = rematch?.requestedBy === me;
+    const oppRequested = rematch?.requestedBy && rematch.requestedBy !== me;
+
+    const myAccepted = !!rematch?.acceptedBy?.[me];
+    const oppAccepted = oppId ? !!rematch?.acceptedBy?.[oppId] : false;
 
 
     const opp = useMemo(() => getOpponentId(game, me), [game, me]);
 
 
-    const [isRolling, setIsRolling] = useState(false);
-    const [rollingFace, setRollingFace] = useState(1);
-    const rollStartedAtRef = useRef(0);
+    // const [isRolling, setIsRolling] = useState(false);
+    // const [rollingFace, setRollingFace] = useState(1);
+    // const rollStartedAtRef = useRef(0);
 
-    const MIN_ROLL_MS = 600;   // how long the animation lasts minimum
-    const TICK_MS = 60;
+    // const MIN_ROLL_MS = 600;   // how long the animation lasts minimum
+    // const TICK_MS = 60;
 
 
-    const shownPendingDie = game?.pendingDie ?? (isRolling ? rollingFace : null);
+    //const shownPendingDie = game?.pendingDie ?? (isRolling ? rollingFace : null);
+    const shownPendingDie = game?.pendingDie ?? null;
     const myBoard = game?.boards?.[me] || [[], [], []];
     const oppBoard = (opp && game?.boards?.[opp]) || [[], [], []];
 
@@ -157,54 +184,209 @@ export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby 
     const myScore = game?.scores?.[me] ?? scoreBoard(myBoard);
     const oppScore = (opp && (game?.scores?.[opp] ?? scoreBoard(oppBoard))) ?? 0;
 
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [historyOpen, setHistoryOpen] = useState(false);
+
 
     useEffect(() => {
-        if (!isRolling) return;
-
-        if (game?.pendingDie != null) {
-            // make the visual land on the real die
-            setRollingFace(game.pendingDie);
-
-            const elapsed = Date.now() - rollStartedAtRef.current;
-            const remaining = Math.max(0, MIN_ROLL_MS - elapsed);
-
-            const t = setTimeout(() => {
-                setIsRolling(false);
-            }, remaining);
-
-            return () => clearTimeout(t);
+        if (room?.seriesOver && game?.phase === "over") {
+            setMenuOpen(true);
         }
-    }, [isRolling, game?.pendingDie]);
+    }, [room?.seriesOver, game?.phase]);
 
+
+
+
+
+    function btnStyle(opts = {}) {
+        const danger = !!opts.danger;
+        return {
+            width: "100%",
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.12)",
+            background: danger ? "rgba(255,70,70,0.14)" : "rgba(255,255,255,0.08)",
+            color: "white",
+            cursor: "pointer",
+            fontWeight: 900,
+        };
+    }
+
+    function getOpponentId(game, me) {
+        if (!game?.players) return null;
+        return game.players[0] === me ? game.players[1] : game.players[0];
+    }
+
+    function RematchBlock({ game, rematch, me, onRequest, onAccept, onDecline }) {
+        const oppId = getOpponentId(game, me);
+        const myAccepted = !!rematch?.acceptedBy?.[me];
+        const oppAccepted = oppId ? !!rematch?.acceptedBy?.[oppId] : false;
+
+        const oppRequested = rematch?.requestedBy && rematch.requestedBy !== me;
+
+        const disabled = game?.phase !== "over";
+
+        if (disabled) {
+            return (
+                <button style={{ ...btnStyle(), opacity: 0.45, cursor: "not-allowed" }} disabled>
+                    Rematch
+                </button>
+            );
+        }
+
+        if (!rematch) {
+            return (
+                <button onClick={onRequest} style={btnStyle()}>
+                    Request Rematch
+                </button>
+            );
+        }
+
+        return (
+            <div
+                style={{
+                    padding: 12,
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(0,0,0,0.22)",
+                    display: "grid",
+                    gap: 10,
+                }}
+            >
+                {/* <div style={{ fontWeight: 900 }}>
+                    Rematch status: {myAccepted ? "You 🗸" : "You Waiting..."} / {oppAccepted ? "Opponent 🗸" : "Opponent Waiting..."}
+                </div> */}
+
+                {oppRequested && !myAccepted ? (
+                    <div style={{ display: "flex", gap: 10 }}>
+                        <button onClick={onAccept} style={{ ...btnStyle(), width: "100%" }}>
+                            Accept
+                        </button>
+                        <button onClick={onDecline} style={{ ...btnStyle({ danger: true }), width: "100%" }}>
+                            Decline
+                        </button>
+                    </div>
+                ) : (
+                    <button onClick={onDecline} style={btnStyle({ danger: true })}>
+                        Cancel / Decline Rematch
+                    </button>
+                )}
+            </div>
+        );
+    }
+
+
+
+    function returnToLobby() {
+        // stay in the room, just go back to lobby UI
+        onLeaveToLobby?.();
+    }
+
+    function quitGame() {
+        // leave room (server will notify other player)
+        socket.emit("room:leave", { code: roomCode }, () => {
+            onLeaveToLobby?.();
+        });
+    }
+
+    function requestRematch() {
+        socket.emit("rematch:request", { code: roomCode });
+    }
+
+    function acceptRematch() {
+        socket.emit("rematch:accept", { code: roomCode });
+    }
+
+    function declineRematch() {
+        socket.emit("rematch:decline", { code: roomCode });
+        setMenuOpen(false);
+    }
+
+    const [seriesEndOpen, setSeriesEndOpen] = useState(false);
+
+    useEffect(() => {
+        const ended = !!room?.seriesOver && game?.phase === "over";
+        if (ended) setSeriesEndOpen(true);
+    }, [room?.seriesOver, game?.phase]);
+
+
+
+
+    // useEffect(() => {
+    //     if (!isRolling) return;
+
+    //     if (game?.pendingDie != null) {
+    //         // make the visual land on the real die
+    //         setRollingFace(game.pendingDie);
+
+    //         const elapsed = Date.now() - rollStartedAtRef.current;
+    //         const remaining = Math.max(0, MIN_ROLL_MS - elapsed);
+
+    //         const t = setTimeout(() => {
+    //             setIsRolling(false);
+    //         }, remaining);
+
+    //         return () => clearTimeout(t);
+    //     }
+    // }, [isRolling, game?.pendingDie]);
+
+
+    function requestRematch() {
+        socket.emit("rematch:request", { code: roomCode }, (res) => {
+            if (res?.ok === false) console.log(res.error);
+        });
+    }
+
+    function acceptRematch() {
+        socket.emit("rematch:accept", { code: roomCode }, (res) => {
+            if (res?.ok === false) console.log(res.error);
+        });
+    }
+
+    function declineRematch() {
+        socket.emit("rematch:decline", { code: roomCode }, (res) => {
+            if (res?.ok === false) console.log(res.error);
+        });
+    }
+
+
+    // function doRoll() {
+    //     if (!canRoll) return;
+
+    //     // start animation immediately
+    //     rollStartedAtRef.current = Date.now();
+    //     setIsRolling(true);
+
+    //     // start cycling faces
+    //     const interval = setInterval(() => {
+    //         setRollingFace(1 + Math.floor(Math.random() * 6));
+    //     }, TICK_MS);
+
+    //     // ask server for the real die
+    //     socket.emit("kb:turn:roll", { code: roomCode }, (res) => {
+    //         if (res && res.ok === false) console.log(res.error);
+    //     });
+
+    //     // stop cycling after MIN_ROLL_MS, but ONLY reveal when game.pendingDie exists
+    //     setTimeout(() => {
+    //         clearInterval(interval);
+
+    //         // if server already provided pendingDie, stop rolling now
+    //         // if not yet, keep rolling visual until it arrives (handled in useEffect below)
+    //         setIsRolling((prev) => {
+    //             return (game?.pendingDie == null) ? true : false;
+    //         });
+    //     }, MIN_ROLL_MS);
+    // }
 
     function doRoll() {
         if (!canRoll) return;
 
-        // start animation immediately
-        rollStartedAtRef.current = Date.now();
-        setIsRolling(true);
-
-        // start cycling faces
-        const interval = setInterval(() => {
-            setRollingFace(1 + Math.floor(Math.random() * 6));
-        }, TICK_MS);
-
-        // ask server for the real die
         socket.emit("kb:turn:roll", { code: roomCode }, (res) => {
             if (res && res.ok === false) console.log(res.error);
         });
-
-        // stop cycling after MIN_ROLL_MS, but ONLY reveal when game.pendingDie exists
-        setTimeout(() => {
-            clearInterval(interval);
-
-            // if server already provided pendingDie, stop rolling now
-            // if not yet, keep rolling visual until it arrives (handled in useEffect below)
-            setIsRolling((prev) => {
-                return (game?.pendingDie == null) ? true : false;
-            });
-        }, MIN_ROLL_MS);
     }
+
 
 
 
@@ -238,18 +420,35 @@ export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby 
                     alignItems: "center",
                 }}
             >
+
+                <button
+                    onClick={() => setMenuOpen(true)}
+                    style={{
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        background: "rgba(0,0,0,0.25)",
+                        color: "white",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                        height: 44,
+                    }}
+                >
+                    Menu
+                </button>
                 <div>
                     <div style={{ fontSize: 20, fontWeight: 900 }}>Knucklebones</div>
                     <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>
                         Room: <b style={{ letterSpacing: 2 }}>{roomCode}</b>
                     </div>
                     <div style={{ opacity: 0.75, marginTop: 6 }}>{game?.message}</div>
+
                 </div>
 
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
 
 
-                    <button
+                    {/* <button
                         onClick={() => {
                             if (!confirm("Quit the game? You will leave the room.")) return;
                             socket.emit("room:leave", { code: roomCode }, () => {
@@ -268,10 +467,112 @@ export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby 
                         }}
                     >
                         Quit Game
-                    </button>
+                    </button> */}
 
                 </div>
             </div>
+
+            {/* Series score */}
+            <div
+                style={{
+                    marginTop: 12,
+                    marginBottom: 10,
+                    padding: "10px 12px",
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(0,0,0,0.18)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 10,
+                    flexWrap: "wrap",
+                }}
+            >
+                {/* <div style={{ fontWeight: 900, opacity: 0.9 }}>
+                    Game Mode: {seriesLabel}{target ? ` (to ${target})` : ""}
+                    {room?.seriesOver ? " Finished" : ""}
+                </div>
+
+                <div style={{ fontWeight: 900, letterSpacing: 0.5 }}>
+                    {myName} <span style={{ opacity: 0.75 }}>({mySeries})</span>
+                    {"  "}—{"  "}
+                    <span style={{ opacity: 0.75 }}>({oppSeries})</span> {oppName}
+                </div> */}
+
+
+                <div
+                    style={{
+                        marginTop: 12,
+                        padding: "12px 18px",
+                        borderRadius: 14,
+                        border: "1px solid rgba(255,255,255,0.10)",
+                        background: "rgba(0,0,0,0.18)",
+                        display: "inline-flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 6,
+                    }}
+                >
+                    <div style={{ fontWeight: 800, opacity: 0.8 }}>
+                        Game Mode: {seriesLabel}
+                        {/* {target ? ` (to ${target})` : ""} */}
+                        {room?.seriesOver ? " — Finished" : ""}
+                    </div>
+
+
+                </div>
+                {/* <div
+                    style={{
+                        fontWeight: 900,
+                        fontSize: 20,
+                        letterSpacing: 1,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                    }}
+                >
+                    <span>{myName}</span>
+                    <span style={{ opacity: 0.7 }}>{mySeries}</span>
+                    <span style={{ opacity: 0.5 }}>—</span>
+                    <span style={{ opacity: 0.7 }}>{oppSeries}</span>
+                    <span>{oppName}</span>
+                </div> */}
+
+                <button
+                    onClick={() => setHistoryOpen(true)}
+                    title="View match history"
+                    style={{
+                        all: "unset",
+                        cursor: "pointer",
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                    }}
+                >
+                    <div
+                        style={{
+                            fontWeight: 900,
+                            fontSize: 20,
+                            letterSpacing: 1,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            whiteSpace: "nowrap",
+                        }}
+                    >
+                        <span>{myName}</span>
+                        <span style={{ opacity: 0.7 }}>{mySeries}</span>
+                        <span style={{ opacity: 0.5 }}>—</span>
+                        <span style={{ opacity: 0.7 }}>{oppSeries}</span>
+                        <span>{oppName}</span>
+                    </div>
+                </button>
+
+
+            </div>
+
 
             {/* Score row */}
             <div
@@ -309,6 +610,9 @@ export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby 
                     <div style={{ fontSize: 12, opacity: 0.7 }}>{!myTurn ? "Their turn" : "—"}</div>
                 </div>
 
+
+
+
                 {game?.phase === "over" && (
                     <div
                         style={{
@@ -326,6 +630,87 @@ export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby 
                                 : "You lose!"}
                     </div>
                 )}
+
+                {game?.phase === "over" && (
+                    <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                        {!rematch && (
+                            <button
+                                onClick={requestRematch}
+                                style={{
+                                    padding: "10px 14px",
+                                    borderRadius: 12,
+                                    border: "1px solid rgba(255,255,255,0.12)",
+                                    background: "rgba(255,255,255,0.08)",
+                                    color: "white",
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                }}
+                            >
+                                Request rematch
+                            </button>
+                        )}
+
+                        {rematch && (
+                            <>
+                                {/* <div style={{ opacity: 0.85, fontWeight: 800 }}>
+                                    Rematch: {myAccepted ? "You ✅" : "You ⏳"} / {oppAccepted ? "Opponent ✅" : "Opponent ⏳"}
+                                </div> */}
+
+                                {oppRequested && !myAccepted && (
+                                    <>
+                                        {/* <button
+                                            onClick={acceptRematch}
+                                            style={{
+                                                padding: "10px 14px",
+                                                borderRadius: 12,
+                                                border: "1px solid rgba(255,255,255,0.12)",
+                                                background: "rgba(255,255,255,0.10)",
+                                                color: "white",
+                                                cursor: "pointer",
+                                                fontWeight: 900,
+                                            }}
+                                        >
+                                            Accept
+                                        </button>
+                                        <button
+                                            onClick={declineRematch}
+                                            style={{
+                                                padding: "10px 14px",
+                                                borderRadius: 12,
+                                                border: "1px solid rgba(255,255,255,0.12)",
+                                                background: "rgba(0,0,0,0.25)",
+                                                color: "white",
+                                                cursor: "pointer",
+                                                fontWeight: 900,
+                                            }}
+                                        >
+                                            Decline
+                                        </button> */}
+                                    </>
+                                )}
+
+                                {/* requester can cancel by declining */}
+                                {/* {iRequested && (
+                                    <button
+                                        onClick={declineRematch}
+                                        style={{
+                                            padding: "10px 14px",
+                                            borderRadius: 12,
+                                            border: "1px solid rgba(255,255,255,0.12)",
+                                            background: "rgba(0,0,0,0.25)",
+                                            color: "white",
+                                            cursor: "pointer",
+                                            fontWeight: 900,
+                                        }}
+                                    >
+                                        Cancel request
+                                    </button>
+                                )} */}
+                            </>
+                        )}
+                    </div>
+                )}
+
             </div>
 
             {/* Boards */}
@@ -459,20 +844,21 @@ export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby 
                     <div style={{ display: "grid", gap: 8 }}>
                         <button
                             onClick={doRoll}
-                            disabled={!canRoll || isRolling}
+                            // disabled={!canRoll || isRolling}
+                            disabled={!canRoll}
                             style={{
                                 padding: "10px 14px",
                                 borderRadius: 12,
                                 border: "1px solid rgba(255,255,255,0.12)",
                                 background: "rgba(255,255,255,0.08)",
                                 color: "white",
-                                cursor: canRoll && !isRolling ? "pointer" : "not-allowed",
+                                cursor: canRoll ? "pointer" : "not-allowed",
                                 fontWeight: 900,
-                                opacity: canRoll && !isRolling ? 1 : 0.5,
+                                opacity: canRoll ? 1 : 0.5,
                                 minWidth: 140,
                             }}
                         >
-                            {isRolling ? "Rolling..." : "Roll"}
+                            Roll
                         </button>
 
                         <div style={{ fontSize: 12, opacity: 0.7, textAlign: "center" }}>
@@ -488,6 +874,273 @@ export default function OnlineGame({ socket, roomCode, me, game, onLeaveToLobby 
 
 
 
+            {menuOpen && (
+                <div
+                    onClick={() => setMenuOpen(false)}
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.6)",
+                        display: "grid",
+                        placeItems: "center",
+                        zIndex: 1000,
+                        padding: 16,
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "min(420px, 100%)",
+                            borderRadius: 18,
+                            border: "1px solid rgba(255,255,255,0.12)",
+                            background: "rgba(16,16,18,0.85)",
+                            boxShadow: "0 18px 45px rgba(0,0,0,0.55)",
+                            backdropFilter: "blur(14px)",
+                            padding: 16,
+                            color: "white",
+                        }}
+                    >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                            <div style={{ fontSize: 18, fontWeight: 900 }}>Game Menu</div>
+                            <button
+                                onClick={() => setMenuOpen(false)}
+                                style={{
+                                    border: "1px solid rgba(255,255,255,0.12)",
+                                    background: "rgba(0,0,0,0.25)",
+                                    color: "white",
+                                    borderRadius: 12,
+                                    width: 40,
+                                    height: 40,
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* Optional message */}
+                        <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
+                            {room?.notice || (room?.seriesOver ? "Series finished." : "")}
+                        </div>
+
+
+                        <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                            {/* Return to Lobby (stay in room) */}
+                            <button
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    onReturnToLobby?.();
+                                }}
+                                style={btnStyle()}
+                            >
+                                Return to Lobby
+                            </button>
+                            {/* Rematch */}
+                            <RematchBlock
+                                game={game}
+                                rematch={room?.rematch || null}
+                                me={me}
+                                onRequest={() => requestRematch()}
+                                onAccept={() => acceptRematch()}
+                                onDecline={() => declineRematch()}
+                            />
+
+                            {/* Quit Game (leave room) */}
+                            <button
+                                onClick={() => {
+                                    setMenuOpen(false);
+
+                                    onQuit?.();
+                                }}
+                                style={btnStyle({ danger: true })}
+                            >
+                                Quit Game
+                            </button>
+
+
+                        </div>
+
+
+
+
+                    </div>
+
+                    {seriesEndOpen && (
+                        <div
+                            onClick={() => { }}
+                            style={{
+                                position: "fixed",
+                                inset: 0,
+                                background: "rgba(0,0,0,0.65)",
+                                display: "grid",
+                                placeItems: "center",
+                                zIndex: 1200,
+                                padding: 16,
+                            }}
+                        >
+                            <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                    width: "min(520px, 100%)",
+                                    borderRadius: 18,
+                                    border: "1px solid rgba(255,255,255,0.12)",
+                                    background: "rgba(16,16,18,0.92)",
+                                    boxShadow: "0 18px 45px rgba(0,0,0,0.55)",
+                                    backdropFilter: "blur(14px)",
+                                    padding: 16,
+                                    color: "white",
+                                }}
+                            >
+                                <div style={{ fontSize: 18, fontWeight: 900 }}>Series Finished</div>
+                                <div style={{ opacity: 0.75, marginTop: 6 }}>
+                                    Final score ({seriesLabel}):
+                                </div>
+
+                                <div
+                                    style={{
+                                        marginTop: 10,
+                                        padding: "12px 14px",
+                                        borderRadius: 14,
+                                        border: "1px solid rgba(255,255,255,0.10)",
+                                        background: "rgba(0,0,0,0.18)",
+                                        display: "flex",
+                                        justifyContent: "center",
+                                        gap: 12,
+                                        fontWeight: 900,
+                                        fontSize: 18,
+                                        flexWrap: "wrap",
+                                    }}
+                                >
+                                    <span>{myName}</span>
+                                    <span style={{ opacity: 0.8 }}>{mySeries}</span>
+                                    <span style={{ opacity: 0.5 }}>—</span>
+                                    <span style={{ opacity: 0.8 }}>{oppSeries}</span>
+                                    <span>{oppName}</span>
+                                </div>
+
+                                <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                                    {/* Rematch (new series) */}
+                                    <RematchBlock
+                                        game={game}
+                                        rematch={room?.rematch || null}
+                                        me={me}
+                                        onRequest={() => requestRematch()}
+                                        onAccept={() => acceptRematch()}
+                                        onDecline={() => declineRematch()}
+                                    />
+
+                                    <button
+                                        onClick={() => {
+                                            setSeriesEndOpen(false);
+                                            onQuit?.();
+                                        }}
+                                        style={btnStyle({ danger: true })}
+                                    >
+                                        Quit Game
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                </div>
+            )}
+            {historyOpen && (
+                <div
+                    onClick={() => setHistoryOpen(false)}
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.6)",
+                        display: "grid",
+                        placeItems: "center",
+                        zIndex: 1500,
+                        padding: 16,
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "min(560px, 100%)",
+                            maxHeight: "80vh",
+                            overflow: "auto",
+                            borderRadius: 18,
+                            border: "1px solid rgba(255,255,255,0.12)",
+                            background: "rgba(16,16,18,0.92)",
+                            boxShadow: "0 18px 45px rgba(0,0,0,0.55)",
+                            backdropFilter: "blur(14px)",
+                            padding: 16,
+                            color: "white",
+                        }}
+                    >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                            <div style={{ fontSize: 18, fontWeight: 900 }}>Match History</div>
+                            <button
+                                onClick={() => setHistoryOpen(false)}
+                                style={{
+                                    border: "1px solid rgba(255,255,255,0.12)",
+                                    background: "rgba(0,0,0,0.25)",
+                                    color: "white",
+                                    borderRadius: 12,
+                                    width: 40,
+                                    height: 40,
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={{ marginTop: 6, opacity: 0.75, fontSize: 13 }}>
+                            {seriesLabel}{target ? ` (first to ${target})` : ""} — {room?.history?.length || 0} matches
+                        </div>
+
+                        <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+                           {(room?.history || []).map((h) => (
+                                <div
+                                    key={h.n}
+                                    style={{
+                                        padding: 12,
+                                        borderRadius: 14,
+                                        border: "1px solid rgba(255,255,255,0.10)",
+                                        background: "rgba(0,0,0,0.22)",
+                                        display: "grid",
+                                        gap: 6,
+                                    }}
+                                >
+                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                        <div style={{ fontWeight: 900 }}>
+                                            Match #{h.n} — {h.winnerId === "draw" ? "Draw" : `${h.winnerName} won`}
+                                        </div>
+                                        <div style={{ opacity: 0.7, fontSize: 12 }}>
+                                            {new Date(h.ts).toLocaleString()}
+                                        </div>
+                                    </div>
+
+                                    <div style={{ fontWeight: 800, opacity: 0.9 }}>
+                                        {h.p1Name} <span style={{ opacity: 0.75 }}>{h.p1Score}</span>
+                                        {"  "}—{"  "}
+                                        <span style={{ opacity: 0.75 }}>{h.p2Score}</span> {h.p2Name}
+                                    </div>
+                                </div>
+                            ))}
+
+                            {(!room?.history || room.history.length === 0) && (
+                                <div style={{ opacity: 0.7, padding: 12 }}>
+                                    No matches yet.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+
         </div>
+
+
+
     );
 }
