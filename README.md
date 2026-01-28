@@ -1,52 +1,32 @@
-A real-time multiplayer implementation of Knucklebones (inspired by Cult of the Lamb), built with React + Socket.IO.
+#  Knucklebones Multiplayer
 
-Players can create or join rooms, play matches live, track series scores, request rematches, and view match history
+A real-time multiplayer version of **Knucklebones** (inspired by *Cult of the Lamb*), built with **React** and **Socket.IO**.
 
+Players can create or join rooms, play live matches, request rematches, and track match history.
 
-Features
+---
 
-Real-time multiplayer gameplay (Socket.IO)
+## Features
 
- Lobby system with room codes
+- Real-time multiplayer (Socket.IO)
+- Lobby system with room codes
+- Turn-based dice gameplay
+- Automatic scoring
+- Rematch system
+- Series modes (Infinite / First to 3 / First to 5)
+- Match history
+- Reconnect-safe
+- Clean UI
 
- Turn-based dice rolling & placement
+---
 
- Automatic scoring logic
+##  Tech Stack
 
- Rematch system (with accept/decline)
+### Frontend
+- React (Vite)
+- Socket.IO Client
 
- Series modes:
-
-Infinite
-
-First to 3
-
-First to 5
-
-Match history viewer
-
- Player name persists (localStorage)
-
- Server reconnect friendly
-
- Clean UI with modals & overlays
-
- Tech Used
-
- Frontend
-
-React (Vite)
-
-Socket.IO client
-
-Inline CSS styling
-
-Backend
-
-Node.js
-
-Express
-
-Socket.IO
-
-In-memory game state
+### Backend
+- Node.js
+- Express
+- Socket.IO
